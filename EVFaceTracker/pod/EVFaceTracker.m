@@ -74,8 +74,25 @@ enum {
 }
 
 -(void)captureImage {
-    AVCapturePhotoSettings *avSettings = [AVCapturePhotoSettings photoSettings];
-    [stillImageOutput capturePhotoWithSettings:avSettings delegate: self];
+    
+    AVCapturePhotoSettings* photoSettings = [AVCapturePhotoSettings photoSettings];
+    photoSettings.flashMode = AVCaptureFlashModeAuto;
+    [photoSettings isAutoStillImageStabilizationEnabled];
+    if (photoSettings.availablePreviewPhotoPixelFormatTypes.count > 0) {
+        photoSettings.previewPhotoFormat = @{ (NSString*)kCVPixelBufferPixelFormatTypeKey : photoSettings.availablePreviewPhotoPixelFormatTypes.firstObject };
+    }
+    
+    if (@available(iOS 13.0, *)) {
+        if ( photoSettings.depthDataDeliveryEnabled && stillImageOutput.availableSemanticSegmentationMatteTypes.count > 0 ) {
+            photoSettings.enabledSemanticSegmentationMatteTypes = stillImageOutput.availableSemanticSegmentationMatteTypes;
+        }
+        photoSettings.photoQualityPrioritization = AVCapturePhotoQualityPrioritizationBalanced;
+    }
+    [stillImageOutput capturePhotoWithSettings:photoSettings delegate: self];
+}
+
+-(void)stopImageCapture {
+    [previewLayer.session stopRunning];
 }
 
 #pragma mark - AVCapturePhotoCaptureDelegate

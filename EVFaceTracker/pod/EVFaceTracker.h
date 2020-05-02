@@ -39,4 +39,5 @@ API_AVAILABLE(ios(10.0))
 - (void)fluidUpdateInterval:(float)interval withReactionFactor:(float) factor;
 - (void)addPreviewView:(UIView *)view;
 - (void)captureImage;
+- (void)stopImageCapture;
 @end
