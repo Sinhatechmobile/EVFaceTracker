@@ -21,7 +21,6 @@ enum {
 };
 
 @interface EVFaceTracker (private)
--(void) setDistance;
 - (BOOL)setupAVCapture;
 - (void)calculateFaceBoxesForFeatures:(NSArray *)features forVideoBox:(CGRect)clap orientation:(UIDeviceOrientation)orientation;
 + (CGRect)videoPreviewBoxForGravity:(NSString *)gravity frameSize:(CGSize)frameSize apertureSize:(CGSize)apertureSize;
@@ -30,8 +29,7 @@ enum {
 
 @implementation EVFaceTracker
 
-@synthesize  delegate, faceRect, reactionFactor, updateInterval;
-
+@synthesize delegate, faceRect, reactionFactor, updateInterval;
 
 - (id)initWithDelegate:(id)theDelegate {
     if ((self = [super init])) {
@@ -60,6 +58,32 @@ enum {
     [self performSelector:@selector(setDistance) withObject:nil afterDelay:interval];
 }
 
+-(void) setDistance {
+    // The size of the recognized face does not change fluid.
+    // In order to still animate it fluient we do some calculations.
+    previousDistance = (1.0f - reactionFactor) * previousDistance +  reactionFactor * distance;
+    
+    [delegate fluentUpdateDistance:previousDistance];
+    
+    // Make sure we do a recalculation 10 times every second in order to make sure we animate to the final position.
+    [self performSelector:@selector(setDistance) withObject:nil afterDelay:updateInterval];
+}
+
+- (void)addPreviewView:(UIView *)view {
+    [view.layer addSublayer: previewLayer];
+}
+
+-(void)captureImage {
+    AVCapturePhotoSettings *avSettings = [AVCapturePhotoSettings photoSettings];
+    [stillImageOutput capturePhotoWithSettings:avSettings delegate: self];
+}
+
+#pragma mark - AVCapturePhotoCaptureDelegate
+-(void)captureOutput:(AVCapturePhotoOutput *)output didFinishProcessingPhoto:(AVCapturePhoto *)photo error:(NSError *)error  API_AVAILABLE(ios(11.0)){
+    NSData *imageData = [photo fileDataRepresentation];
+    UIImage *image = [UIImage imageWithData:imageData];
+    [delegate capturedImage:image];
+}
 
 #pragma mark - <AVCaptureVideoDataOutputSampleBufferDelegate>
 
@@ -106,28 +130,11 @@ enum {
 
 @implementation EVFaceTracker (private)
 
--(void) setDistance {
-    // The size of the recognized face does not change fluid.
-    // In order to still animate it fluient we do some calculations.
-    previousDistance = (1.0f - reactionFactor) * previousDistance +  reactionFactor * distance;
-    
-    [self.delegate fluentUpdateDistance:previousDistance];
-    
-    // Make sure we do a recalculation 10 times every second in order to make sure we animate to the final position.
-    [self performSelector:@selector(setDistance) withObject:nil afterDelay:updateInterval];
-}
-
 - (BOOL)setupAVCapture {
     NSError *error = nil;
     
     AVCaptureSession *session = [AVCaptureSession new];
-    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPhone)
-    {
-        [session setSessionPreset:AVCaptureSessionPreset640x480];
-    } else {
-        [session setSessionPreset:AVCaptureSessionPresetPhoto];
-    }
-    [session setSessionPreset:AVCaptureSessionPreset352x288];
+    [session setSessionPreset:AVCaptureSessionPresetPhoto];
     
     // Select a video device, make an input
     AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
@@ -144,7 +151,7 @@ enum {
     }
     
     // Make a still image output
-    stillImageOutput = [AVCaptureStillImageOutput new];
+    stillImageOutput = [AVCapturePhotoOutput new];
     [stillImageOutput addObserver:self forKeyPath:@"capturingStillImage" options:NSKeyValueObservingOptionNew context:@"AVCaptureStillImageIsCapturingStillImageContext"];
     if ([session canAddOutput:stillImageOutput]) {
         [session addOutput:stillImageOutput];
@@ -170,8 +177,9 @@ enum {
     
     previewLayer = [[AVCaptureVideoPreviewLayer alloc] initWithSession:session];
     [previewLayer setBackgroundColor:[[UIColor blackColor] CGColor]];
-    [previewLayer setVideoGravity:AVLayerVideoGravityResizeAspect];
-    [previewLayer setFrame:CGRectMake(0,0,320,480)];
+    [previewLayer setVideoGravity:AVLayerVideoGravityResizeAspectFill];
+    
+    [previewLayer setFrame:CGRectMake(0,0,[[UIScreen mainScreen] bounds].size.width,[[UIScreen mainScreen] bounds].size.height-60.0)];
     
     [session startRunning];
     
@@ -200,10 +208,9 @@ enum {
     return TRUE;
 }
 
-
 // called asynchronously as the capture output is capturing sample buffers, this method asks the face detector (if on)
 // to detect features and for each draw the red square in a layer and set appropriate orientation
-- (void)calculateFaceBoxesForFeatures:(NSArray *)features forVideoBox:(CGRect)clap orientation:(UIDeviceOrientation)orientation {    
+- (void)calculateFaceBoxesForFeatures:(NSArray *)features forVideoBox:(CGRect)clap orientation:(UIDeviceOrientation)orientation {
     
     CGSize parentFrameSize = [previewLayer frame].size;
     NSString *gravity = [previewLayer videoGravity];
@@ -238,13 +245,13 @@ enum {
             faceRect = CGRectOffset(faceRect, previewBox.origin.x, previewBox.origin.y);
         
         dispatch_async(dispatch_get_main_queue(), ^(void) {
-            float offsetWidth = (faceRect.origin.x - (160 - (faceRect.size.width / 2))) ;
-            float offsetHeight = (faceRect.origin.y  - ( 240 -(faceRect.origin.y /2 )));
+            float offsetWidth = (self->faceRect.origin.x - (160 - (self->faceRect.size.width / 2))) ;
+            float offsetHeight = (self->faceRect.origin.y  - ( 240 -(self->faceRect.origin.y /2 )));
             
             // This is the current recongized distance. See the setDistance method for usages
-            distance = (800.0f - (faceRect.size.width + faceRect.size.height)) / 10.0f;
-
-            [self.delegate faceIsTracked:faceRect withOffsetWidth:offsetWidth andOffsetHeight:offsetHeight andDistance: distance];
+            self->distance = (800.0f - (self->faceRect.size.width + self->faceRect.size.height)) / 10.0f;
+        
+            [self->delegate faceIsTracked:self->faceRect withOffsetWidth:offsetWidth andOffsetHeight:offsetHeight andDistance: self->distance];
         });
     }
     
@@ -252,8 +259,7 @@ enum {
 }
 
 
-
-// Find where the video box is positioned within the preview layer based on the video size and gravity
+// find where the video box is positioned within the preview layer based on the video size and gravity
 + (CGRect)videoPreviewBoxForGravity:(NSString *)gravity frameSize:(CGSize)frameSize apertureSize:(CGSize)apertureSize {
     CGFloat apertureRatio = apertureSize.height / apertureSize.width;
     CGFloat viewRatio = frameSize.width / frameSize.height;
